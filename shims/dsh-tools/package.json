@@ -1,0 +1,11 @@
+{
+  "name": "@deepseek-ai/dsh-tools",
+  "version": "0.0.0-local-shim",
+  "private": true,
+  "type": "module",
+  "description": "Local stand-in for the DSH host tool-definition helper. Only `defineTool` is used by the vendored dsh-ssh tool set, and it is a pure declaration helper — the declaration object is converted to an MCP tool by lib/mcp-tools.mjs.",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js"
+  }
+}

@@ -1,0 +1,2074 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>wb-ssh · 连接管理</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232563eb'/%3E%3Cpath d='M9 11l5 5-5 5M17 21h6' stroke='white' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E">
+<style>
+/* ============================================================================
+   Design tokens — 60-30-10 palette, 4px spacing grid, 1.25 type scale.
+   ========================================================================= */
+:root {
+  /* brand */
+  --primary:        #2563eb;
+  --primary-light:  #3b82f6;
+  --primary-dark:   #1d4ed8;
+  --primary-ring:   rgba(37, 99, 235, .14);
+  --accent:         #f59e0b;
+
+  /* neutrals — light workspace */
+  --bg:             #f4f7fb;
+  --bg-sunken:      #eef2f7;
+  --surface:        #ffffff;
+  --border:         #e3e9f0;
+  --border-strong:  #cfd8e3;
+
+  /* neutrals — dark rail */
+  --rail:           #0f172a;
+  --rail-2:         #16203a;
+  --rail-line:      rgba(255,255,255,.08);
+  --rail-text:      #e8eefc;
+  --rail-muted:     #8fa1c0;
+  --rail-faint:     #64748b;
+
+  /* text */
+  --text:           #0f172a;
+  --text-2:         #475569;
+  --text-muted:     #7c8ba1;
+
+  /* semantic */
+  --ok:             #059669;
+  --ok-soft:        #e7f7f0;
+  --warn:           #d97706;
+  --warn-soft:      #fdf3e0;
+  --err:            #dc2626;
+  --err-soft:       #fdeaea;
+
+  /* radius */
+  --r-sm: 6px;  --r-md: 10px;  --r-lg: 14px;  --r-xl: 18px;  --r-full: 999px;
+
+  /* elevation */
+  --sh-sm: 0 1px 2px rgba(15,23,42,.06);
+  --sh-md: 0 4px 12px -2px rgba(15,23,42,.08), 0 2px 6px -2px rgba(15,23,42,.05);
+  --sh-lg: 0 12px 28px -8px rgba(15,23,42,.14), 0 4px 10px -4px rgba(15,23,42,.07);
+  --sh-xl: 0 24px 48px -12px rgba(15,23,42,.22);
+
+  /* motion */
+  --fast: 150ms;  --normal: 240ms;
+  --ease: cubic-bezier(.4, 0, .2, 1);
+  --spring: cubic-bezier(.34, 1.4, .64, 1);
+
+  /* type */
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+          "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code",
+          Consolas, "Liberation Mono", Menlo, monospace;
+
+  --rail-w: 304px;
+  /* Content measure. Wide enough that an ordinary 1920 screen is fully used;
+     past that the workspace centres instead of hugging the rail. */
+  --measure: 1920px;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 400 14px/1.7 var(--sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+button, input, select, textarea { font: inherit; color: inherit; }
+h1, h2, h3 { margin: 0; letter-spacing: -.01em; }
+
+/* ============================================================================
+   Shell
+   ========================================================================= */
+.app { display: grid; grid-template-columns: var(--rail-w) minmax(0, 1fr); min-height: 100vh; }
+
+/* ============================================================================
+   Sidebar (dark rail)
+   ========================================================================= */
+.sidebar {
+  position: sticky; top: 0; height: 100vh;
+  display: flex; flex-direction: column;
+  background: linear-gradient(180deg, var(--rail) 0%, var(--rail-2) 100%);
+  color: var(--rail-text);
+  border-right: 1px solid rgba(0,0,0,.25);
+}
+.sidebar::before {
+  content: ''; position: absolute; left: 0; right: 0; top: 0; height: 240px;
+  pointer-events: none;
+  background: radial-gradient(360px 190px at 18% 0%, rgba(59,130,246,.24), transparent 72%);
+}
+
+.search { position: relative; display: flex; align-items: center; margin-top: 14px; }
+.search > svg {
+  position: absolute; left: 11px; width: 14px; height: 14px;
+  color: var(--rail-faint); pointer-events: none;
+}
+.search input {
+  width: 100%; padding: 8px 11px 8px 33px;
+  border: 1px solid rgba(255,255,255,.09); border-radius: 9px;
+  background: rgba(255,255,255,.05); color: var(--rail-text); font-size: 12.5px;
+  transition: border-color var(--fast), background var(--fast), box-shadow var(--fast);
+}
+.search input::placeholder { color: var(--rail-faint); }
+.search input:hover { background: rgba(255,255,255,.075); }
+.search input:focus {
+  outline: none; border-color: rgba(96,165,250,.55);
+  background: rgba(255,255,255,.09); box-shadow: 0 0 0 3px rgba(59,130,246,.16);
+}
+
+.brand { display: flex; align-items: center; gap: 12px; padding: 22px 20px 18px; }
+.logo {
+  width: 40px; height: 40px; flex: none; border-radius: 11px;
+  display: grid; place-items: center;
+  background: linear-gradient(135deg, var(--primary-light), var(--primary-dark));
+  box-shadow: 0 6px 16px -4px rgba(37,99,235,.6), inset 0 1px 0 rgba(255,255,255,.25);
+}
+.logo svg { width: 21px; height: 21px; }
+.brand h1 { font-size: 15px; font-weight: 650; line-height: 1.3; }
+.brand p { margin: 1px 0 0; font-size: 11.5px; color: var(--rail-muted); letter-spacing: .02em; }
+
+.rail-pad { padding: 0 16px; }
+
+.btn-new {
+  width: 100%; display: flex; align-items: center; justify-content: center; gap: 7px;
+  padding: 10px 14px; border: 0; border-radius: var(--r-md); cursor: pointer;
+  font-size: 13.5px; font-weight: 600; color: #fff;
+  background: linear-gradient(135deg, var(--primary-light), var(--primary));
+  box-shadow: 0 6px 16px -6px rgba(37,99,235,.8), inset 0 1px 0 rgba(255,255,255,.2);
+  transition: transform var(--fast) var(--ease), box-shadow var(--fast) var(--ease), filter var(--fast) var(--ease);
+}
+.btn-new:hover { filter: brightness(1.08); transform: translateY(-1px); box-shadow: 0 10px 22px -8px rgba(37,99,235,.9); }
+.btn-new:active { transform: translateY(0) scale(.99); }
+.btn-new svg { width: 15px; height: 15px; }
+
+.list-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 22px 20px 8px;
+  font-size: 11px; font-weight: 600; letter-spacing: .09em; text-transform: uppercase;
+  color: var(--rail-faint);
+}
+.count-chip {
+  margin-left: auto; padding: 1px 8px; border-radius: var(--r-full);
+  background: rgba(255,255,255,.08); color: var(--rail-muted);
+  font-size: 11px; font-weight: 600; letter-spacing: 0;
+}
+
+.list { flex: 1; overflow-y: auto; padding: 2px 12px 12px; }
+.list::-webkit-scrollbar { width: 8px; }
+.list::-webkit-scrollbar-thumb { background: rgba(255,255,255,.1); border-radius: 4px; }
+.list::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,.18); }
+
+.conn {
+  position: relative; width: 100%; text-align: left; cursor: pointer;
+  padding: 11px 12px 11px 14px; margin-bottom: 6px;
+  border: 1px solid transparent; border-radius: var(--r-md);
+  background: rgba(255,255,255,.035); color: var(--rail-text);
+  transition: background var(--fast) var(--ease), border-color var(--fast) var(--ease), transform var(--fast) var(--ease);
+}
+.conn:hover { background: rgba(255,255,255,.075); transform: translateX(2px); }
+.conn.active {
+  background: rgba(59,130,246,.16);
+  border-color: rgba(96,165,250,.35);
+}
+.conn.active::before {
+  content: ''; position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: linear-gradient(180deg, #60a5fa, #2563eb);
+}
+.conn .c-top { display: flex; align-items: center; gap: 8px; }
+.conn .c-name { font-size: 13.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conn .c-busy { margin-left: auto; font-size: 10px; padding: 1px 6px; border-radius: var(--r-full); background: rgba(245,158,11,.18); color: #fbbf24; }
+.conn .c-addr {
+  font-family: var(--mono); font-size: 11px; color: var(--rail-muted);
+  margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.conn .c-err { font-size: 11px; color: #fca5a5; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--rail-faint); }
+.dot.connected { background: #34d399; box-shadow: 0 0 0 3px rgba(52,211,153,.16); animation: pulse 2.4s var(--ease) infinite; }
+.dot.connecting, .dot.reconnecting { background: #fbbf24; box-shadow: 0 0 0 3px rgba(251,191,36,.16); animation: pulse 1.2s var(--ease) infinite; }
+.dot.error { background: #f87171; box-shadow: 0 0 0 3px rgba(248,113,113,.16); }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
+
+.list-empty {
+  padding: 28px 16px; text-align: center; color: var(--rail-faint); font-size: 12.5px; line-height: 1.8;
+}
+.list-empty svg { width: 34px; height: 34px; opacity: .35; margin-bottom: 10px; }
+
+.sidebar-foot {
+  padding: 12px 20px 16px; border-top: 1px solid var(--rail-line);
+  font-size: 11px; color: var(--rail-faint);
+}
+.foot-row { display: flex; align-items: center; gap: 7px; }
+.foot-row + .foot-row { margin-top: 6px; }
+.foot-row svg { width: 12px; height: 12px; flex: none; opacity: .7; }
+.foot-path {
+  font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  direction: rtl; text-align: left;
+}
+.live { margin-left: auto; display: inline-flex; align-items: center; gap: 5px; color: var(--rail-muted); }
+.live .beacon { width: 6px; height: 6px; border-radius: 50%; background: #34d399; animation: pulse 2s infinite; }
+.live.offline .beacon { background: #f87171; animation: none; }
+.live.offline { color: #fca5a5; }
+
+/* ============================================================================
+   Main
+   ========================================================================= */
+.main { min-width: 0; display: flex; flex-direction: column; }
+
+.topbar {
+  position: sticky; top: 0; z-index: 20;
+  padding: 0;
+  background: rgba(244,247,251,.88);
+  backdrop-filter: saturate(180%) blur(12px);
+  border-bottom: 1px solid var(--border);
+}
+.topbar::after {
+  content: ''; position: absolute; left: 0; right: 0; top: 0; height: 2px;
+  background: linear-gradient(90deg, var(--primary-light), #8b5cf6 55%, var(--accent));
+  opacity: .85;
+}
+/* Same measure as .content, so the title lines up with the cards below it. */
+.topbar-inner {
+  display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+  width: 100%; max-width: var(--measure); margin-inline: auto;
+  padding: 16px 28px;
+}
+.tb-title h2 { font-size: 17px; font-weight: 650; line-height: 1.35; }
+.tb-title p { margin: 2px 0 0; font-size: 12.5px; color: var(--text-muted); }
+.tb-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+
+.content {
+  width: 100%; max-width: var(--measure); margin-inline: auto;
+  padding: 22px 28px 56px;
+  display: flex; flex-direction: column; gap: 18px;
+}
+
+/* ============================================================================
+   Card
+   ========================================================================= */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xl);
+  box-shadow: var(--sh-sm);
+  overflow: hidden;
+}
+.card-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 15px 20px; border-bottom: 1px solid var(--border);
+  background: linear-gradient(180deg, #fcfdff, #f9fbfe);
+}
+.card-head .ico {
+  width: 28px; height: 28px; flex: none; border-radius: 8px; display: grid; place-items: center;
+  background: var(--primary-ring); color: var(--primary);
+}
+.card-head .ico svg { width: 15px; height: 15px; }
+.card-head h3 { font-size: 13.5px; font-weight: 650; }
+.card-head .sub { font-size: 12px; color: var(--text-muted); margin-left: 2px; }
+.card-head .spacer { flex: 1; }
+.card-body { padding: 20px; }
+
+/* ============================================================================
+   Form
+   ========================================================================= */
+/* Fields reflow to as many columns as the width affords, so a wide screen
+   doesn't produce 1-metre input boxes. */
+.grid { display: grid; gap: 14px 16px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.grid .span2 { grid-column: span 2; }
+
+.field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.field > label { font-size: 12.5px; font-weight: 550; color: var(--text-2); display: flex; align-items: center; gap: 5px; }
+.req { color: var(--err); font-weight: 700; }
+
+.inp {
+  width: 100%; padding: 9px 12px;
+  border: 1px solid var(--border-strong); border-radius: var(--r-md);
+  background: #fff; font-size: 13.5px;
+  transition: border-color var(--fast) var(--ease), box-shadow var(--fast) var(--ease), background var(--fast);
+}
+.inp::placeholder { color: #a9b6c8; }
+.inp:hover { border-color: #b8c4d4; }
+.inp:focus {
+  outline: none; border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-ring);
+}
+.inp.mono { font-family: var(--mono); font-size: 12.5px; }
+textarea.inp { resize: vertical; min-height: 96px; line-height: 1.55; }
+
+select.inp {
+  appearance: none; cursor: pointer; padding-right: 34px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%237c8ba1' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 12px center;
+}
+
+.inp-wrap { position: relative; display: flex; align-items: center; }
+.inp-wrap .inp { padding-right: 40px; }
+.eye {
+  position: absolute; right: 6px; width: 28px; height: 28px; border: 0; border-radius: 7px;
+  background: transparent; cursor: pointer; display: grid; place-items: center; color: var(--text-muted);
+  transition: background var(--fast), color var(--fast);
+}
+.eye:hover { background: var(--bg-sunken); color: var(--text-2); }
+.eye svg { width: 15px; height: 15px; }
+
+.hint { font-size: 11.5px; color: var(--text-muted); line-height: 1.55; }
+.hint.warn { color: var(--warn); }
+
+/* segmented control */
+.seg { display: inline-flex; gap: 3px; padding: 3px; border-radius: var(--r-md); background: var(--bg-sunken); }
+.seg label { position: relative; }
+.seg input { position: absolute; opacity: 0; width: 0; height: 0; }
+.seg span {
+  display: block; padding: 7px 15px; border-radius: 8px; cursor: pointer;
+  font-size: 13px; font-weight: 500; color: var(--text-2); white-space: nowrap;
+  transition: background var(--fast) var(--ease), color var(--fast) var(--ease), box-shadow var(--fast) var(--ease);
+}
+.seg span:hover { color: var(--text); }
+.seg input:checked + span {
+  background: #fff; color: var(--primary); font-weight: 600;
+  box-shadow: var(--sh-sm);
+}
+.seg input:focus-visible + span { box-shadow: 0 0 0 3px var(--primary-ring); }
+
+.field-note {
+  margin-top: 12px; padding: 10px 13px; border-radius: var(--r-md);
+  background: var(--bg-sunken); border: 1px solid var(--border);
+  font-size: 12px; color: var(--text-2); line-height: 1.65;
+  display: flex; gap: 8px; align-items: flex-start;
+}
+.field-note svg { width: 14px; height: 14px; flex: none; margin-top: 3px; color: var(--text-muted); }
+
+.form-foot {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--border);
+}
+.form-foot .spacer { flex: 1; }
+
+/* ============================================================================
+   Buttons
+   ========================================================================= */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  padding: 9px 16px; border-radius: var(--r-md); cursor: pointer;
+  border: 1px solid var(--border-strong); background: #fff; color: var(--text);
+  font-size: 13.5px; font-weight: 550;
+  transition: background var(--fast) var(--ease), border-color var(--fast) var(--ease),
+              transform var(--fast) var(--ease), box-shadow var(--fast) var(--ease), filter var(--fast);
+}
+.btn svg { width: 15px; height: 15px; }
+.btn:hover:not(:disabled) { background: #f7f9fc; border-color: #b8c4d4; }
+.btn:active:not(:disabled) { transform: scale(.985); }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--primary-ring); }
+
+.btn.primary {
+  background: linear-gradient(135deg, var(--primary-light), var(--primary));
+  border-color: transparent; color: #fff;
+  box-shadow: 0 4px 12px -4px rgba(37,99,235,.6);
+}
+.btn.primary:hover:not(:disabled) { filter: brightness(1.08); box-shadow: 0 8px 18px -6px rgba(37,99,235,.7); }
+.btn.ghost { border-color: transparent; background: transparent; color: var(--text-2); }
+.btn.ghost:hover:not(:disabled) { background: var(--bg-sunken); color: var(--text); }
+.btn.danger { color: var(--err); border-color: #f2cfcf; }
+.btn.danger:hover:not(:disabled) { background: var(--err-soft); border-color: #eab8b8; }
+.btn.outline { color: var(--primary); border-color: #c3d6f7; background: #fff; }
+.btn.outline:hover:not(:disabled) { background: var(--primary-ring); border-color: var(--primary); }
+.btn.ghost.danger-quiet { color: var(--text-muted); }
+.btn.ghost.danger-quiet:hover:not(:disabled) { background: var(--err-soft); color: var(--err); }
+.btn.sm { padding: 6px 11px; font-size: 12.5px; border-radius: 8px; }
+.btn.icon { padding: 7px; border-radius: 8px; }
+
+.spin {
+  width: 13px; height: 13px; border-radius: 50%; flex: none;
+  border: 2px solid rgba(255,255,255,.35); border-top-color: #fff;
+  animation: spin .7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ============================================================================
+   Connection cards (main pane)
+   ========================================================================= */
+.conn-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); }
+
+.conn-card {
+  position: relative; padding: 15px 16px;
+  display: flex; flex-direction: column;
+  border: 1px solid var(--border); border-radius: var(--r-lg);
+  background: #fff; box-shadow: var(--sh-sm);
+  transition: transform var(--normal) var(--ease), box-shadow var(--normal) var(--ease), border-color var(--normal) var(--ease);
+}
+.conn-card::before {
+  content: ''; position: absolute; left: 0; top: 14px; bottom: 14px; width: 3px;
+  border-radius: 0 3px 3px 0; background: var(--border-strong);
+  transition: background var(--normal) var(--ease);
+}
+.conn-card.s-connected::before { background: linear-gradient(180deg, #34d399, var(--ok)); }
+.conn-card.s-connecting::before, .conn-card.s-reconnecting::before { background: linear-gradient(180deg, #fbbf24, var(--warn)); }
+.conn-card.s-error::before { background: linear-gradient(180deg, #f87171, var(--err)); }
+.conn-card:hover { transform: translateY(-3px); box-shadow: var(--sh-lg); border-color: #d8e0ea; }
+.conn-card.active { border-color: #bfd3f8; box-shadow: 0 0 0 3px var(--primary-ring), var(--sh-md); }
+
+.cc-top { display: flex; align-items: center; gap: 9px; }
+.cc-name { font-size: 14.5px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cc-addr {
+  font-family: var(--mono); font-size: 12px; color: var(--text-2);
+  margin-top: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cc-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 11px; }
+.tag {
+  font-size: 11px; padding: 2.5px 8px; border-radius: var(--r-full);
+  background: var(--bg-sunken); color: var(--text-2); font-weight: 500;
+  display: inline-flex; align-items: center; gap: 4px; max-width: 100%;
+}
+.tag svg { width: 11px; height: 11px; flex: none; opacity: .8; }
+.tag span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tag.ok { background: var(--ok-soft); color: var(--ok); }
+.tag.warn { background: var(--warn-soft); color: var(--warn); }
+.tag.err { background: var(--err-soft); color: var(--err); }
+
+.badge {
+  font-size: 11.5px; font-weight: 600; padding: 3px 9px; border-radius: var(--r-full);
+  display: inline-flex; align-items: center; gap: 5px; flex: none;
+  background: var(--bg-sunken); color: var(--text-2);
+}
+.badge .d { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.badge.connected { background: var(--ok-soft); color: var(--ok); }
+.badge.connecting, .badge.reconnecting { background: var(--warn-soft); color: var(--warn); }
+.badge.error { background: var(--err-soft); color: var(--err); }
+
+.cc-err {
+  margin-top: 10px; padding: 8px 11px; border-radius: 8px;
+  background: var(--err-soft); color: var(--err); font-size: 12px; line-height: 1.55;
+  word-break: break-word;
+}
+.cc-acts { display: flex; gap: 7px; flex-wrap: wrap; margin-top: auto; padding-top: 14px; }
+
+.empty-state { padding: 44px 20px; text-align: center; }
+.empty-state svg { width: 46px; height: 46px; color: var(--border-strong); margin-bottom: 14px; }
+.empty-state h4 { font-size: 14.5px; font-weight: 600; margin-bottom: 6px; }
+.empty-state p { margin: 0; font-size: 13px; color: var(--text-muted); line-height: 1.7; }
+
+/* ============================================================================
+   Terminal
+   ========================================================================= */
+.term-bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.term-bar select.inp { max-width: 190px; }
+.cmd-line { display: flex; gap: 10px; margin-top: 12px; }
+.cmd-line .inp-wrap { flex: 1; }
+.prompt-sign { font-family: var(--mono); color: var(--ok); font-weight: 700; user-select: none; }
+
+.term {
+  margin-top: 14px; border-radius: var(--r-md); overflow: hidden;
+  border: 1px solid #1e293b; background: #0b1220;
+}
+.term-head {
+  display: flex; align-items: center; gap: 7px; padding: 8px 12px;
+  background: #111c30; border-bottom: 1px solid #1e293b;
+}
+.term-head .tl { width: 9px; height: 9px; border-radius: 50%; }
+.term-head .tl:nth-child(1) { background: #f87171; }
+.term-head .tl:nth-child(2) { background: #fbbf24; }
+.term-head .tl:nth-child(3) { background: #34d399; }
+.term-head .tt { margin-left: 6px; font-family: var(--mono); font-size: 11px; color: #64748b; }
+.term-head .st { margin-left: auto; font-family: var(--mono); font-size: 11px; color: #94a3b8; }
+.term-body {
+  margin: 0; padding: 14px 15px; min-height: 190px; max-height: 420px; overflow: auto;
+  font-family: var(--mono); font-size: 12.5px; line-height: 1.62; color: #d7e3f4;
+  white-space: pre-wrap; word-break: break-word;
+}
+.term-body:empty::before { content: attr(data-ph); color: #4a5a75; }
+.term-body::-webkit-scrollbar { width: 9px; height: 9px; }
+.term-body::-webkit-scrollbar-thumb { background: #26344c; border-radius: 5px; }
+.term-body::-webkit-scrollbar-thumb:hover { background: #35486a; }
+
+/* ============================================================================
+   Toasts
+   ========================================================================= */
+.toasts {
+  position: fixed; top: 18px; right: 18px; z-index: 100;
+  display: flex; flex-direction: column; gap: 10px; max-width: 380px; pointer-events: none;
+}
+.toast {
+  display: flex; align-items: flex-start; gap: 10px; pointer-events: auto;
+  padding: 12px 14px; border-radius: var(--r-md);
+  background: #fff; border: 1px solid var(--border);
+  box-shadow: var(--sh-xl); font-size: 13px; line-height: 1.6;
+  animation: toastIn 320ms var(--spring);
+}
+.toast.out { animation: toastOut 200ms var(--ease) forwards; }
+@keyframes toastIn { from { opacity: 0; transform: translateX(24px) scale(.96); } to { opacity: 1; transform: none; } }
+@keyframes toastOut { to { opacity: 0; transform: translateX(24px) scale(.96); } }
+.toast .ti { width: 18px; height: 18px; flex: none; margin-top: 1px; }
+.toast .tx { flex: 1; min-width: 0; word-break: break-word; }
+.toast.ok { border-left: 3px solid var(--ok); }
+.toast.ok .ti { color: var(--ok); }
+.toast.err { border-left: 3px solid var(--err); }
+.toast.err .ti { color: var(--err); }
+.toast.info { border-left: 3px solid var(--primary); }
+.toast.info .ti { color: var(--primary); }
+
+/* ============================================================================
+   Responsive
+   ========================================================================= */
+@media (max-width: 1000px) {
+  .app { grid-template-columns: 1fr; }
+  .sidebar { position: static; height: auto; }
+  .list { max-height: 300px; }
+  .content { padding: 18px 18px 48px; }
+  .topbar-inner { padding: 14px 18px; }
+}
+@media (max-width: 640px) {
+  .grid { grid-template-columns: 1fr; }
+  .grid .span2 { grid-column: span 1; }
+  .conn-grid { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; }
+}
+
+/* ------------------------------------------------------------------ access */
+.acc-row { display: flex; gap: 8px; align-items: center; }
+.acc-row .inp { flex: 1; min-width: 0; }
+.acc-row .btn { flex: none; }
+.inp[readonly] { background: var(--bg-sunken, #eef2f7); color: var(--text-2); cursor: default; }
+.inp[readonly]:hover { border-color: var(--border-strong); }
+.inp[type=password] { letter-spacing: .1em; }
+.inp[type=password]::placeholder { letter-spacing: normal; }
+/* ============================================================================
+   Activity log — live feed + filterable table.
+   Uses the same tokens as the rest of the page; the only new primitives are
+   the actor chip, the status dot and the timeline gutter.
+   ========================================================================= */
+
+/* --- actor chips: an agent vs a human must be distinguishable at a glance --- */
+.chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  height: 22px; padding: 0 8px;
+  border-radius: var(--r-full);
+  font: 600 12px/1 var(--sans);
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+.chip .dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+
+.chip.agent { background: #eef2ff; color: #3730a3; border-color: #dfe3fb; }
+.chip.agent .dot { background: #4f46e5; }
+.chip.human { background: var(--ok-soft); color: #04694a; border-color: #cdeee0; }
+.chip.human .dot { background: var(--ok); }
+.chip.system { background: var(--bg-sunken); color: var(--text-2); border-color: var(--border); }
+.chip.system .dot { background: var(--text-muted); }
+
+/* --- action pills --- */
+.act {
+  display: inline-flex; align-items: center;
+  height: 20px; padding: 0 7px;
+  border-radius: var(--r-sm);
+  font: 600 11px/1 var(--sans);
+  background: var(--bg-sunken); color: var(--text-2);
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+.act.ok { background: var(--ok-soft); color: #04694a; border-color: #cdeee0; }
+.act.warn { background: var(--warn-soft); color: #92500a; border-color: #f5e3c4; }
+.act.err { background: var(--err-soft); color: #a91b1b; border-color: #f8d4d4; }
+.act.tool { background: #eef2ff; color: #3730a3; border-color: #dfe3fb; font-family: var(--mono); font-weight: 500; }
+
+/* --- status dot on each row --- */
+.outcome { width: 8px; height: 8px; border-radius: 50%; flex: none; margin-top: 6px; }
+.outcome.ok { background: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); }
+.outcome.fail { background: var(--err); box-shadow: 0 0 0 3px var(--err-soft); }
+.outcome.none { background: var(--border-strong); }
+
+/* --- the feed list --- */
+.feed { display: flex; flex-direction: column; }
+.feed-row {
+  display: grid;
+  /* 16px: the status dot. 132px: `MM-DD HH:MM:SS` in the mono face at 12px —
+     measured, because 96px wrapped the stamp onto two lines. 64px: `9999 ms`. */
+  grid-template-columns: 16px 132px minmax(0, 1fr) 64px;
+  gap: 10px;
+  align-items: start;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+  transition: background var(--fast) var(--ease);
+}
+.feed-row:last-child { border-bottom: 0; }
+.feed-row:hover { background: var(--bg-sunken); }
+.feed-row.is-new { animation: feedIn 900ms var(--ease); }
+@keyframes feedIn {
+  from { background: #eef2ff; }
+  to   { background: transparent; }
+}
+
+.feed-when { font: 500 12px/1.5 var(--mono); color: var(--text-muted); white-space: nowrap; }
+.feed-when .rel { display: block; color: var(--text-2); font-family: var(--sans); font-size: 11px; }
+
+.feed-main { min-width: 0; }
+.feed-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.feed-target {
+  display: inline-flex; align-items: baseline; gap: 5px;
+  font: 600 13px/1.4 var(--mono); color: var(--text);
+  min-width: 0;
+}
+.feed-target .host { font-weight: 400; color: var(--text-muted); font-size: 12px; }
+.feed-detail {
+  margin-top: 3px;
+  font: 400 12px/1.5 var(--mono);
+  color: var(--text-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.feed-detail.plain { font-family: var(--sans); }
+.feed-ms { font: 500 12px/1.5 var(--mono); color: var(--text-muted); white-space: nowrap; text-align: right; }
+
+/* --- filter bar --- */
+.filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px 12px;
+  align-items: end;
+}
+.filters .field { min-width: 0; }
+.filters select.inp, .filters input.inp { height: 36px; }
+.filter-note {
+  grid-column: 1 / -1;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap;
+  padding-top: 2px;
+}
+.filter-count { font: 500 12px/1.6 var(--sans); color: var(--text-muted); }
+.filter-count b { color: var(--text); font-weight: 600; }
+
+.presets { display: flex; gap: 6px; flex-wrap: wrap; }
+.preset {
+  height: 28px; padding: 0 10px;
+  border-radius: var(--r-full);
+  border: 1px solid var(--border);
+  background: var(--surface); color: var(--text-2);
+  font: 500 12px/1 var(--sans); cursor: pointer;
+  transition: all var(--fast) var(--ease);
+}
+.preset:hover { border-color: var(--border-strong); color: var(--text); }
+.preset[aria-pressed="true"] { background: var(--primary); border-color: var(--primary); color: #fff; }
+
+/* --- live indicator in the card head --- */
+.live-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 22px; padding: 0 9px;
+  border-radius: var(--r-full);
+  background: var(--ok-soft); color: #04694a;
+  font: 600 11px/1 var(--sans);
+  border: 1px solid #cdeee0;
+}
+.live-chip .beacon { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); animation: pulse 2s var(--ease) infinite; }
+.live-chip.off { background: var(--bg-sunken); color: var(--text-muted); border-color: var(--border); }
+.live-chip.off .beacon { background: var(--text-muted); animation: none; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+
+/* --- stats strip above the feed ---
+   Fixed 5 columns on a wide card, wrapping to pairs on a narrow one. `auto-fit`
+   was tried first and left the tiles narrow with a band of dead space on the
+   right, because five items cannot fill an arbitrary 1600px evenly. */
+.stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
+.stat {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg-sunken);
+  min-width: 0;
+}
+.stat .n { font: 700 20px/1.2 var(--sans); color: var(--text); }
+.stat .n.bad { color: var(--err); }
+.stat .k { font: 500 11px/1.6 var(--sans); color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.empty-mini { padding: 28px 12px; text-align: center; color: var(--text-muted); font-size: 13px; }
+
+/* Demo entries are synthetic and must never be mistaken for a real audit trail.
+   The badge is deliberately loud and the row is tinted; see seed-activity.mjs. */
+.feed-row.is-demo { background: rgba(230, 145, 30, .07); }
+.chip.demo {
+  background: rgba(230, 145, 30, .16); color: #b26a00;
+  border: 1px solid rgba(230, 145, 30, .42); font-weight: 600;
+}
+.demo-note {
+  display: flex; align-items: center; gap: 8px; margin: 0 0 10px;
+  padding: 9px 12px; border-radius: 8px; font-size: 12.5px; line-height: 1.5;
+  background: rgba(230, 145, 30, .10); border: 1px solid rgba(230, 145, 30, .35); color: #8a5200;
+}
+.demo-note button { margin-left: auto; }
+
+@media (max-width: 1080px) {
+  .stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 760px) {
+  .feed-row { grid-template-columns: 14px minmax(0, 1fr) auto; }
+  .feed-when { grid-column: 2; font-size: 11px; }
+  .feed-when .rel { display: inline; margin-left: 6px; }
+  .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ============================ sidebar ============================ -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="logo">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M5 7l5 5-5 5M13 17h6"/>
+        </svg>
+      </div>
+      <div>
+        <h1>wb-ssh</h1>
+        <p>连接管理</p>
+      </div>
+    </div>
+
+    <div class="rail-pad">
+      <button class="btn-new" id="btnNew">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        新建连接
+      </button>
+      <div class="search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.6-3.6"/></svg>
+        <input type="text" id="search" placeholder="搜索连接…" spellcheck="false" autocomplete="off">
+      </div>
+    </div>
+
+    <div class="list-head">
+      已保存连接
+      <span class="count-chip" id="count">0</span>
+    </div>
+
+    <div class="list" id="list">
+      <div class="list-empty">加载中…</div>
+    </div>
+
+    <div class="sidebar-foot">
+      <div class="foot-row">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7a2 2 0 012-2h12a2 2 0 012 2v10a2 2 0 01-2 2H6a2 2 0 01-2-2z"/><path d="M8 10h8M8 14h5"/></svg>
+        <span class="foot-path" id="recordsPath" title="">—</span>
+      </div>
+      <div class="foot-row">
+        <span class="live" id="live"><span class="beacon"></span>实时同步</span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ============================= main ============================= -->
+  <main class="main">
+    <div class="topbar">
+      <div class="topbar-inner">
+        <div class="tb-title">
+          <h2 id="formTitle">新建连接</h2>
+          <p id="formSub">填写后保存，即可被 MCP 工具直接调用</p>
+        </div>
+        <div class="tb-actions">
+          <button class="btn ghost sm" id="refresh">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 11-2.6-6.4M21 3v6h-6"/></svg>
+            刷新
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="content">
+
+      <!-- ---------------------------- connections ---------------------------- -->
+      <section class="card">
+        <div class="card-head">
+          <div class="ico">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></svg>
+          </div>
+          <h3>连接</h3>
+          <span class="sub" id="connSub"></span>
+        </div>
+        <div class="card-body">
+          <div id="connPane"><div class="empty-state"><p>加载中…</p></div></div>
+        </div>
+      </section>
+
+      <!-- ----------------------------- activity ----------------------------- -->
+      <section class="card">
+        <div class="card-head">
+          <div class="ico">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>
+          </div>
+          <h3>活动</h3>
+          <span class="sub">谁、什么时候、用哪台机器做了什么</span>
+          <span class="spacer"></span>
+          <span class="live-chip" id="actLive"><span class="beacon"></span><span id="actLiveText">实时</span></span>
+        </div>
+        <div class="card-body">
+
+          <div class="stats" id="actStats"></div>
+
+          <div class="feed" id="actFeed">
+            <div class="empty-mini">加载中…</div>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- ------------------------------- log -------------------------------- -->
+      <section class="card">
+        <div class="card-head">
+          <div class="ico">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v16H4z"/><path d="M8 9h8M8 13h8M8 17h5"/></svg>
+          </div>
+          <h3>日志</h3>
+          <span class="sub">按 agent、时间、VPS 筛选</span>
+          <span class="spacer"></span>
+          <button class="btn ghost sm" id="logClear">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>
+            清空
+          </button>
+        </div>
+        <div class="card-body">
+
+          <div class="filters">
+            <div class="field">
+              <label for="fActor">Agent</label>
+              <select class="inp" id="fActor"><option value="">全部 agent</option></select>
+            </div>
+            <div class="field">
+              <label for="fTarget">VPS</label>
+              <select class="inp" id="fTarget"><option value="">全部 VPS</option></select>
+            </div>
+            <div class="field">
+              <label for="fAction">操作</label>
+              <select class="inp" id="fAction">
+                <option value="">全部操作</option>
+                <option value="mcp.call">调用工具</option>
+                <option value="connect">连接</option>
+                <option value="exec">执行命令</option>
+                <option value="disconnect">断开</option>
+                <option value="create">新建连接</option>
+                <option value="update">修改连接</option>
+                <option value="remove">删除连接</option>
+                <option value="login">登录页面</option>
+                <option value="access.denied">拒绝访问</option>
+                <option value="credential">修改凭据</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="fRange">时间</label>
+              <select class="inp" id="fRange">
+                <option value="">全部时间</option>
+                <option value="today">今天</option>
+                <option value="24h">最近 24 小时</option>
+                <option value="7d">最近 7 天</option>
+                <option value="30d">最近 30 天</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="fResult">结果</label>
+              <select class="inp" id="fResult">
+                <option value="">全部</option>
+                <option value="ok">仅成功</option>
+                <option value="fail">仅失败</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="fQ">搜索</label>
+              <input class="inp" type="text" id="fQ" placeholder="命令、主机、用户名…" spellcheck="false" autocomplete="off">
+            </div>
+
+            <div class="filter-note">
+              <div class="presets">
+                <button class="preset" data-preset="all" aria-pressed="true">全部</button>
+                <button class="preset" data-preset="agent" aria-pressed="false">只看 agent</button>
+                <button class="preset" data-preset="human" aria-pressed="false">只看本机操作</button>
+                <button class="preset" data-preset="fail" aria-pressed="false">只看失败</button>
+              </div>
+              <span class="filter-count" id="logCount">—</span>
+            </div>
+          </div>
+
+          <div class="feed" id="logFeed" style="margin-top:16px">
+            <div class="empty-mini">加载中…</div>
+          </div>
+
+          <div style="display:flex;justify-content:center;padding-top:12px">
+            <button class="btn outline sm" id="logMore" style="display:none">加载更早的记录</button>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- ------------------------------- form ------------------------------- -->
+      <section class="card">
+        <div class="card-head">
+          <div class="ico">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg>
+          </div>
+          <h3 id="cardTitle">连接详情</h3>
+          <span class="spacer"></span>
+          <span class="badge" id="modeBadge" style="display:none">编辑中</span>
+        </div>
+        <div class="card-body">
+          <form id="form" autocomplete="off">
+            <input type="hidden" id="mode" value="create">
+            <input type="hidden" id="originalName" value="">
+
+            <div class="grid">
+              <div class="field">
+                <label for="name">连接名 <span class="req">*</span></label>
+                <input class="inp" type="text" id="name" placeholder="mybox" spellcheck="false">
+              </div>
+              <div class="field">
+                <label for="user">用户名 <span class="req">*</span></label>
+                <input class="inp" type="text" id="user" placeholder="root" spellcheck="false">
+              </div>
+              <div class="field">
+                <label for="host">主机 / IP <span class="req">*</span></label>
+                <input class="inp mono" type="text" id="host" placeholder="1.2.3.4" spellcheck="false">
+              </div>
+              <div class="field">
+                <label for="port">端口</label>
+                <input class="inp mono" type="number" id="port" value="22" min="1" max="65535">
+              </div>
+
+              <div class="field span2">
+                <label>认证方式</label>
+                <div class="seg">
+                  <label><input type="radio" name="authType" value="password" checked><span>密码</span></label>
+                  <label><input type="radio" name="authType" value="keypath"><span>私钥文件</span></label>
+                  <label><input type="radio" name="authType" value="keytext"><span>私钥内容</span></label>
+                </div>
+              </div>
+
+              <div class="field span2" id="wrapPassword">
+                <label for="password">密码</label>
+                <div class="inp-wrap">
+                  <input class="inp" type="password" id="password" spellcheck="false" placeholder="连接密码">
+                  <button type="button" class="eye" data-for="password" title="显示 / 隐藏">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
+                  </button>
+                </div>
+                <div class="hint" id="passwordHint">保存在本机共享凭据库中，连接记录里只存引用。</div>
+              </div>
+
+              <div class="field span2" id="wrapKeyPath" style="display:none">
+                <label for="privateKeyPath">私钥文件绝对路径</label>
+                <input class="inp mono" type="text" id="privateKeyPath" placeholder="C:\Users\yourname\.ssh\id_rsa" spellcheck="false">
+                <div class="hint">路径只记在连接记录里，不进凭据库。</div>
+              </div>
+
+              <div class="field span2" id="wrapKeyText" style="display:none">
+                <label for="privateKey">私钥内容</label>
+                <textarea class="inp mono" id="privateKey" rows="6" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" spellcheck="false"></textarea>
+              </div>
+              <div class="field span2" id="wrapPassphrase" style="display:none">
+                <label for="passphrase">私钥口令（可选）</label>
+                <div class="inp-wrap">
+                  <input class="inp" type="password" id="passphrase" spellcheck="false" placeholder="私钥有口令时填写">
+                  <button type="button" class="eye" data-for="passphrase" title="显示 / 隐藏">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
+                  </button>
+                </div>
+              </div>
+
+              <div class="field span2">
+                <label for="tunnel">跳板机（可选）</label>
+                <select class="inp" id="tunnel"><option value="">不使用</option></select>
+                <div class="hint">选择另一个已保存的连接作为跳板。</div>
+              </div>
+            </div>
+
+            <div class="field-note">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+              <div>密钥永不经过模型：凭据只写入本机共享凭据库，接口响应里不含任何明文。</div>
+            </div>
+
+            <div class="form-foot">
+              <button type="submit" class="btn primary" id="saveConnect">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>
+                保存并连接
+              </button>
+              <button type="submit" class="btn" id="saveOnly" data-only="1">仅保存</button>
+              <span class="spacer"></span>
+              <button type="button" class="btn ghost" id="reset">清空表单</button>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <!-- ----------------------------- terminal ----------------------------- -->
+      <section class="card">
+        <div class="card-head">
+          <div class="ico">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 7l5 5-5 5M13 17h6"/></svg>
+          </div>
+          <h3>执行命令</h3>
+          <span class="sub">只作用于选中的连接</span>
+        </div>
+        <div class="card-body">
+          <div class="term-bar">
+            <select class="inp" id="execTarget"><option value="">选择一个连接…</option></select>
+            <span class="hint" style="margin:0" id="execMeta"></span>
+          </div>
+          <div class="cmd-line">
+            <span class="prompt-sign">$</span>
+            <div class="inp-wrap">
+              <input class="inp mono" type="text" id="execCmd" placeholder="uptime" spellcheck="false">
+            </div>
+            <button class="btn primary" id="execRun">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4l14 8-14 8z"/></svg>
+              执行
+            </button>
+          </div>
+          <div class="term">
+            <div class="term-head">
+              <span class="tl"></span><span class="tl"></span><span class="tl"></span>
+              <span class="tt" id="termTitle">stdout</span>
+              <span class="st" id="termStatus">idle</span>
+            </div>
+            <pre class="term-body" id="execOut" data-ph="输出会显示在这里…"></pre>
+          </div>
+          <div class="cmd-line">
+            <button class="btn sm" id="execRead" disabled>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>
+              读取输出
+            </button>
+            <button class="btn sm danger" id="execKill" disabled>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+              终止
+            </button>
+            <span class="spacer"></span>
+            <button class="btn sm ghost" id="execClear">清屏</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ------------------------------ access ------------------------------ -->
+      <section class="card">
+        <div class="card-head">
+          <div class="ico">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="15" r="4"/><path d="M10.8 12.2L20 3M17 6l2 2M14 9l2 2"/></svg>
+          </div>
+          <h3>访问凭据</h3>
+          <span class="sub">令牌和密码，两种都能进这个页面</span>
+        </div>
+        <div class="card-body">
+          <div class="grid">
+            <div class="field span2">
+              <label for="accToken">访问令牌</label>
+              <div class="acc-row">
+                <input class="inp mono" type="text" id="accToken" spellcheck="false" readonly>
+                <button class="btn sm" id="accGen">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 0113.7-5.7L20 8M20 12a8 8 0 01-13.7 5.7L4 16M20 4v4h-4M4 20v-4h4"/></svg>
+                  随机生成
+                </button>
+                <button class="btn sm outline" id="accCopy">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 012-2h10"/></svg>
+                  复制地址
+                </button>
+              </div>
+              <span class="hint">换掉令牌后旧地址立刻失效，但当前这个浏览器不受影响，不用重新登录。</span>
+            </div>
+
+            <div class="field span2">
+              <label for="accPw">访问密码</label>
+              <div class="acc-row">
+                <input class="inp" type="password" id="accPw" spellcheck="false" autocomplete="new-password" placeholder="输入新密码（至少 8 位）">
+                <button class="btn sm" id="accPwSave">保存</button>
+                <button class="btn sm ghost danger-quiet" id="accPwClear">清除</button>
+              </div>
+              <span class="hint" id="accPwHint">读取中…</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+</div>
+
+<div class="toasts" id="toasts"></div>
+
+<script>
+'use strict';
+const TOKEN = new URLSearchParams(location.search).get('t') || '';
+const $ = (id) => document.getElementById(id);
+
+let state = { connections: [], paths: {}, tunnelCandidates: [] };
+let currentExecId = null;
+let lastListSig = null;
+let alive = true;
+
+const STATUS_TEXT = {
+  connected: '已连接', connecting: '连接中', reconnecting: '重连中',
+  disconnected: '未连接', error: '错误',
+};
+
+/* ------------------------------------------------------------------ helpers */
+const ICONS = {
+  ok:   '<svg class="ti" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/></svg>',
+  err:  '<svg class="ti" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7.5v5M12 16h.01"/></svg>',
+  info: '<svg class="ti" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>',
+};
+
+function toast(kind, text) {
+  if (!text) return;
+  const box = document.createElement('div');
+  box.className = 'toast ' + kind;
+  box.innerHTML = ICONS[kind] || ICONS.info;
+  const span = document.createElement('div');
+  span.className = 'tx';
+  span.textContent = text;
+  box.appendChild(span);
+  $('toasts').appendChild(box);
+  const life = kind === 'err' ? 7000 : 4000;
+  setTimeout(() => {
+    box.classList.add('out');
+    setTimeout(() => box.remove(), 220);
+  }, life);
+}
+
+async function api(path, body) {
+  const res = await fetch(path, {
+    method: body === undefined ? 'GET' : 'POST',
+    headers: body === undefined
+      ? { 'x-wb-ssh-token': TOKEN }
+      : { 'content-type': 'application/json', 'x-wb-ssh-token': TOKEN },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const text = await res.text();
+  try { return JSON.parse(text); } catch { return { ok: false, error: text.slice(0, 300) }; }
+}
+
+/* ------------------------------------------------------------------ access */
+
+async function loadCredential() {
+  const data = await api('/api/credential');
+  if (data.ok !== true) {
+    $('accPwHint').textContent = '读取凭据状态失败。';
+    return;
+  }
+  $('accToken').value = data.token;
+  $('accPwHint').textContent = data.hasPassword
+    ? '已设置。密码只存哈希、不回显；忘了就点「清除」重设。'
+    : '未设置。现在只能用带令牌的地址进入。';
+}
+
+$('accGen').onclick = async () => {
+  if (!confirm('生成新令牌？旧地址会立刻失效。')) return;
+  const data = await api('/api/setToken', { token: '' });
+  if (data.ok !== true) return toast('err', data.error || '生成失败');
+  $('accToken').value = data.token;
+  toast('ok', data.message);
+};
+
+$('accCopy').onclick = async () => {
+  const address = location.origin + '/?t=' + $('accToken').value;
+  try {
+    await navigator.clipboard.writeText(address);
+    toast('ok', '完整地址已复制：' + address);
+  } catch {
+    // The clipboard API needs a secure context. localhost qualifies in Chrome
+    // and Edge, but not everywhere — so leave the value selected as a fallback.
+    $('accToken').select();
+    toast('info', '自动复制不可用，已选中令牌，请手动复制。');
+  }
+};
+
+$('accPwSave').onclick = async () => {
+  const password = $('accPw').value;
+  if (password === '') return toast('err', '先输入密码，或者点「清除」关掉密码登录');
+  const data = await api('/api/setPassword', { password });
+  if (data.ok !== true) return toast('err', data.error || '保存失败');
+  $('accPw').value = '';
+  toast('ok', data.message);
+  loadCredential();
+};
+
+$('accPwClear').onclick = async () => {
+  if (!confirm('清除访问密码？之后只能用令牌进入。')) return;
+  const data = await api('/api/setPassword', { password: '' });
+  if (data.ok !== true) return toast('err', data.error || '清除失败');
+  toast('ok', data.message);
+  loadCredential();
+};
+
+loadCredential();
+
+/* ============================================================================
+   Activity log.
+
+   Two sections share one renderer: a live feed (the latest handful, polled)
+   and a filterable log table (paged on demand). Both read the same entries —
+   the feed is simply the log with no filters and a small limit.
+
+   Entries written by the MCP server arrive in the same file, so a tool call
+   made in another agent's process shows up here within one poll, without that
+   agent having to tell this page anything.
+   ========================================================================= */
+
+const ACTION_META = {
+  'mcp.call': { label: '调用工具', cls: 'tool' },
+  connect: { label: '连接', cls: 'ok' },
+  disconnect: { label: '断开', cls: '' },
+  exec: { label: '执行命令', cls: '' },
+  'exec.kill': { label: '终止命令', cls: 'warn' },
+  create: { label: '新建连接', cls: 'ok' },
+  update: { label: '修改连接', cls: '' },
+  remove: { label: '删除连接', cls: 'warn' },
+  login: { label: '登录页面', cls: '' },
+  'access.denied': { label: '拒绝访问', cls: 'err' },
+  credential: { label: '修改凭据', cls: '' },
+  'system.start': { label: '服务启动', cls: '' },
+};
+
+const ACTOR_KIND_TEXT = { agent: 'agent', human: '本机', system: '系统' };
+
+/** Latest feed entries, refreshed by the poll below. */
+let feedEntries = [];
+/** Filtered log page, appended to by "load earlier". */
+let logEntries = [];
+/** Ids already rendered, so new rows can be animated exactly once. */
+const seenIds = new Set();
+/** Cursor for paging: the timestamp of the oldest row currently shown. */
+let logCursor = null;
+const LOG_PAGE = 80;
+
+function actionMeta(action) {
+  return ACTION_META[action] ?? { label: action, cls: '' };
+}
+
+/** "3 秒前" — coarse is fine, this is a glanceable timeline. */
+function relTime(ms) {
+  const delta = Math.max(0, Date.now() - ms);
+  if (delta < 5000) return '刚刚';
+  if (delta < 60000) return `${Math.floor(delta / 1000)} 秒前`;
+  if (delta < 3600000) return `${Math.floor(delta / 60000)} 分钟前`;
+  if (delta < 86400000) return `${Math.floor(delta / 3600000)} 小时前`;
+  if (delta < 2592000000) return `${Math.floor(delta / 86400000)} 天前`;
+  return '';
+}
+
+/** Absolute stamp, always shown alongside the relative one. */
+function absTime(ms) {
+  const d = new Date(ms);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+/**
+ * One log row.
+ *
+ * Built from DOM nodes rather than an HTML string: `detail` contains
+ * command lines typed by an agent, and textContent is the only way to render
+ * that without inventing an escaping bug.
+ */
+function activityRow(entry, { animate }) {
+  const row = el('div', 'feed-row');
+  if (animate) row.classList.add('is-new');
+  if (entry.demo === true) row.classList.add('is-demo');
+
+  const outcome = el('span', `outcome ${entry.ok === true ? 'ok' : entry.ok === false ? 'fail' : 'none'}`);
+  outcome.title = entry.ok === true ? '成功' : entry.ok === false ? '失败' : '无结果';
+  row.appendChild(outcome);
+
+  const when = el('div', 'feed-when');
+  when.appendChild(document.createTextNode(absTime(entry.t)));
+  when.appendChild(el('span', 'rel', relTime(entry.t)));
+  when.title = entry.ts ?? '';
+  row.appendChild(when);
+
+  const main = el('div', 'feed-main');
+  const head = el('div', 'feed-head');
+
+  const actor = el('span', `chip ${entry.actor?.kind ?? 'agent'}`);
+  actor.appendChild(el('span', 'dot'));
+  actor.appendChild(document.createTextNode(entry.actor?.label ?? '未知'));
+  actor.title = [ACTOR_KIND_TEXT[entry.actor?.kind] ?? '', entry.actor?.detail ?? ''].filter(Boolean).join(' · ');
+  head.appendChild(actor);
+
+  const meta = actionMeta(entry.action);
+  head.appendChild(el('span', `act ${meta.cls}`, meta.label));
+
+  // An audit row that cannot be told apart from a real one is worse than no row
+  // at all. Anything synthetic is labelled, loudly, right here.
+  if (entry.demo === true) {
+    const badge = el('span', 'chip demo', '演示');
+    badge.title = '这条不是真实调用：由 seed-activity.mjs 生成，仅用于预览界面。';
+    head.appendChild(badge);
+  }
+
+  const targetName = entry.target?.name ?? '';
+  if (targetName !== '') {
+    const target = el('span', 'feed-target');
+    target.appendChild(document.createTextNode(targetName));
+    const where = [entry.target.host, entry.target.port].filter((part) => part !== '' && part !== null).join(':');
+    if (where !== '') target.appendChild(el('span', 'host', where));
+    head.appendChild(target);
+  }
+
+  main.appendChild(head);
+
+  if (entry.detail !== '') {
+    // Command lines and tool names read better monospaced; prose does not.
+    const looksLikeCode = entry.action === 'exec' || entry.action === 'mcp.call';
+    const detail = el('div', `feed-detail${looksLikeCode ? '' : ' plain'}`, entry.detail);
+    detail.title = entry.detail;
+    main.appendChild(detail);
+  }
+
+  row.appendChild(main);
+  row.appendChild(el('div', 'feed-ms', entry.ms === null || entry.ms === undefined ? '' : `${entry.ms} ms`));
+  return row;
+}
+
+/** Paint the live feed. */
+function renderFeed() {
+  const box = $('actFeed');
+  if (feedEntries.length === 0) {
+    box.innerHTML = '';
+    box.appendChild(el('div', 'empty-mini', '还没有活动记录。用任一 agent 调用一次 wb-ssh 工具，或者在这里连接一台机器。'));
+    return;
+  }
+  box.innerHTML = '';
+  const demo = feedEntries.filter((entry) => entry.demo === true).length;
+  if (demo > 0) box.appendChild(demoBanner(demo, feedEntries.length, 'actFeed'));
+  for (const entry of feedEntries) {
+    const isNew = !seenIds.has(entry.id);
+    seenIds.add(entry.id);
+    box.appendChild(activityRow(entry, { animate: isNew }));
+  }
+}
+
+/**
+ * Banner shown whenever synthetic rows are on screen. Silently mixing demo data
+ * into an audit view is exactly the failure this exists to prevent, so the
+ * count is always stated in full ("3 / 24" rather than "3").
+ */
+function demoBanner(demoCount, totalCount, anchorId) {
+  const note = el('div', 'demo-note');
+  note.appendChild(el('span', '', `⚠ ${demoCount} / ${totalCount} 条是演示数据，不是真实调用。`));
+  const purge = el('button', 'btn ghost sm', '清除演示数据');
+  purge.onclick = async () => {
+    purge.disabled = true;
+    purge.textContent = '清除中…';
+    try {
+      const res = await fetch('api/seedPurge', {
+        method: 'POST',
+        headers: { 'x-wb-ssh-token': TOKEN },
+      });
+      if (!res.ok) throw new Error(String(res.status));
+      const data = await res.json();
+      toast('ok', `已清除 ${data.removed} 条演示数据。`);
+      seenIds.clear();
+      await refreshActivity();
+      await loadLog();
+      await loadFacets();
+    } catch (err) {
+      toast('err', '清除失败：' + err.message);
+      purge.disabled = false;
+      purge.textContent = '清除演示数据';
+    }
+  };
+  note.appendChild(purge);
+  note.dataset.anchor = anchorId;
+  return note;
+}
+
+/** Summary tiles above the feed. */
+function renderStats(entries) {
+  const box = $('actStats');
+  const calls = entries.filter((entry) => entry.action === 'mcp.call');
+  const agents = new Set(calls.map((entry) => entry.actor?.label).filter(Boolean));
+  const boxes = new Set(entries.map((entry) => entry.target?.name).filter((name) => name !== '' && name !== undefined));
+  const failed = entries.filter((entry) => entry.ok === false).length;
+  const denied = entries.filter((entry) => entry.action === 'access.denied').length;
+
+  box.innerHTML = '';
+  for (const [value, key, bad] of [
+    [String(calls.length), '窗口内工具调用', false],
+    [String(agents.size), '调用的 agent', false],
+    [String(boxes.size), '涉及的 VPS', false],
+    [String(failed), '失败', failed > 0],
+    [String(denied), '被拒访问', denied > 0],
+  ]) {
+    const tile = el('div', 'stat');
+    tile.appendChild(el('div', `n${bad ? ' bad' : ''}`, value));
+    tile.appendChild(el('div', 'k', key));
+    box.appendChild(tile);
+  }
+}
+
+/* ------------------------------------------------------------- log section */
+
+/** Read the filter controls into an API body. */
+function currentFilter() {
+  const range = $('fRange').value;
+  const body = {
+    actor: $('fActor').value,
+    target: $('fTarget').value,
+    action: $('fAction').value,
+    q: $('fQ').value.trim(),
+    limit: LOG_PAGE,
+  };
+
+  if ($('fResult').value === 'ok') body.ok = true;
+  if ($('fResult').value === 'fail') body.ok = false;
+
+  const now = Date.now();
+  if (range === 'today') {
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    body.since = start.getTime();
+  } else if (range === '24h') body.since = now - 86400000;
+  else if (range === '7d') body.since = now - 7 * 86400000;
+  else if (range === '30d') body.since = now - 30 * 86400000;
+
+  // The preset buttons set these directly.
+  if (presetActorKind !== null) {
+    body.action = body.action || '';
+    body.actorKind = presetActorKind;
+  }
+  return body;
+}
+
+/**
+ * `null` when no preset is active.
+ *
+ * Filtering by *kind* rather than by name is what the preset buttons mean:
+ * "只看 agent" should match every agent, including ones first seen later.
+ * The page cannot express that through the existing `actor` field, which is an
+ * exact label, so the kind is applied client-side over the fetched page.
+ */
+let presetActorKind = null;
+
+async function loadLog({ append = false } = {}) {
+  const body = currentFilter();
+  if (append && logCursor !== null) body.before = logCursor;
+
+  const data = await api('/api/activity', body);
+  if (data.ok !== true) {
+    $('logFeed').innerHTML = '';
+    $('logFeed').appendChild(el('div', 'empty-mini', data.error ?? '读取日志失败'));
+    return;
+  }
+
+  const fetched = data.entries;
+  const kept = presetActorKind === null
+    ? fetched
+    : fetched.filter((entry) => (entry.actor?.kind ?? 'agent') === presetActorKind);
+
+  logEntries = append ? [...logEntries, ...kept] : kept;
+  logCursor = logEntries.length > 0 ? logEntries[logEntries.length - 1].t : null;
+
+  const box = $('logFeed');
+  box.innerHTML = '';
+  if (logEntries.length === 0) {
+    box.appendChild(el('div', 'empty-mini', '没有符合条件的记录。'));
+  } else {
+    const demo = logEntries.filter((entry) => entry.demo === true).length;
+    if (demo > 0) box.appendChild(demoBanner(demo, logEntries.length, 'logFeed'));
+    for (const entry of logEntries) box.appendChild(activityRow(entry, { animate: false }));
+  }
+
+  $('logMore').style.display = data.truncated || logEntries.length < data.total ? '' : 'none';
+
+  // A kind preset filters here rather than in the query, so the server's
+  // `total` counts rows this page then discarded. Quoting that number as
+  // "共 N 条匹配" would overstate what is on screen, so the wording changes.
+  const size = `${(data.size / 1024).toFixed(1)} KB`;
+  const demoTotal = logEntries.filter((entry) => entry.demo === true).length;
+  const demoNote = demoTotal > 0 ? ` · 其中 ${demoTotal} 条为演示` : '';
+  $('logCount').textContent = presetActorKind === null
+    ? `显示 ${logEntries.length} 条 · 共 ${data.total} 条匹配${demoNote} · 日志文件 ${size}`
+    : `显示 ${logEntries.length} 条（本页 ${fetched.length} 条中筛出 ${kept.length} 条）${demoNote} · 日志文件 ${size}`;
+}
+
+/** Repopulate the two dropdowns without clobbering the user's selection. */
+async function loadFacets() {
+  const data = await api('/api/activityFacets');
+  if (data.ok !== true) return;
+
+  for (const [id, items, placeholder, key] of [
+    ['fActor', data.actors ?? [], '全部 agent', 'label'],
+    ['fTarget', data.targets ?? [], '全部 VPS', 'name'],
+  ]) {
+    const select = $(id);
+    const previous = select.value;
+    select.innerHTML = '';
+    select.appendChild(new Option(placeholder, ''));
+    for (const item of items) {
+      const suffix = key === 'label' ? `（${item.count}）` : '';
+      select.appendChild(new Option(`${item[key]}${suffix}`, item[key]));
+    }
+    // Keep the previous choice if it still exists.
+    if ([...select.options].some((option) => option.value === previous)) select.value = previous;
+  }
+}
+
+/* --------------------------------------------------------------- live feed */
+
+async function refreshActivity() {
+  const data = await api('/api/activity', { limit: 40 });
+  const chip = $('actLive');
+
+  if (data.ok !== true) {
+    chip.classList.add('off');
+    $('actLiveText').textContent = '已断开';
+    return;
+  }
+  chip.classList.remove('off');
+  $('actLiveText').textContent = '实时';
+
+  // Compare by id so an unchanged window does not re-render (and re-animate).
+  const signature = data.entries.map((entry) => entry.id).join(',');
+  if (signature !== refreshActivity.lastSignature) {
+    refreshActivity.lastSignature = signature;
+    feedEntries = data.entries;
+    renderFeed();
+    renderStats(data.entries);
+  }
+}
+refreshActivity.lastSignature = null;
+
+/* ------------------------------------------------------------------ wiring */
+
+for (const id of ['fActor', 'fTarget', 'fAction', 'fRange', 'fResult']) {
+  $(id).addEventListener('change', () => { logCursor = null; loadLog(); });
+}
+
+let searchTimer = null;
+$('fQ').addEventListener('input', () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => { logCursor = null; loadLog(); }, 250);
+});
+
+$('logMore').addEventListener('click', () => loadLog({ append: true }));
+
+$('logClear').addEventListener('click', async () => {
+  if (!confirm('清空整个活动日志？所有 agent 的调用记录都会消失，无法恢复。')) return;
+  const data = await api('/api/activityClear', {});
+  if (data.ok !== true) return toast('err', data.error ?? '清空失败');
+  toast('ok', data.message ?? '已清空');
+  seenIds.clear();
+  logCursor = null;
+  refreshActivity.lastSignature = null;
+  await refreshActivity();
+  await loadLog();
+  await loadFacets();
+});
+
+for (const button of document.querySelectorAll('.preset')) {
+  button.addEventListener('click', () => {
+    for (const other of document.querySelectorAll('.preset')) other.setAttribute('aria-pressed', 'false');
+    button.setAttribute('aria-pressed', 'true');
+
+    const preset = button.dataset.preset;
+    presetActorKind = null;
+    $('fAction').value = '';
+    $('fResult').value = '';
+    $('fActor').value = '';
+
+    if (preset === 'agent') presetActorKind = 'agent';
+    else if (preset === 'human') presetActorKind = 'human';
+    else if (preset === 'fail') $('fResult').value = 'fail';
+
+    logCursor = null;
+    loadLog();
+  });
+}
+
+loadFacets();
+refreshActivity();
+loadLog();
+
+function el(tag, cls, text) {
+  const node = document.createElement(tag);
+  if (cls) node.className = cls;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function icon(paths, cls) {
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '2');
+  svg.setAttribute('stroke-linecap', 'round');
+  svg.setAttribute('stroke-linejoin', 'round');
+  if (cls) svg.setAttribute('class', cls);
+  for (const d of paths) {
+    const p = document.createElementNS(ns, 'path');
+    p.setAttribute('d', d);
+    svg.appendChild(p);
+  }
+  return svg;
+}
+
+function fmtTime(ms) {
+  if (!ms) return '';
+  const d = new Date(ms);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function setLive(online) {
+  if (online === alive) return;
+  alive = online;
+  const node = $('live');
+  node.classList.toggle('offline', !online);
+  node.lastChild.textContent = online ? '实时同步' : '连接已断开';
+}
+
+/* ------------------------------------------------------------ sidebar list */
+function renderSidebar() {
+  const list = $('list');
+  list.innerHTML = '';
+  $('count').textContent = String(state.connections.length);
+
+  if (state.connections.length === 0) {
+    const box = el('div', 'list-empty');
+    box.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/></svg>';
+    box.appendChild(el('div', null, '还没有连接'));
+    list.appendChild(box);
+    return;
+  }
+
+  const query = $('search').value.trim().toLowerCase();
+  const shown = query === ''
+    ? state.connections
+    : state.connections.filter((c) =>
+        `${c.name} ${c.user} ${c.host}:${c.port}`.toLowerCase().includes(query));
+
+  if (shown.length === 0) {
+    const box = el('div', 'list-empty');
+    box.appendChild(el('div', null, '没有匹配的连接'));
+    list.appendChild(box);
+    return;
+  }
+
+  const editing = $('originalName').value;
+  for (const conn of shown) {
+    const item = el('div', 'conn' + (conn.name === editing ? ' active' : ''));
+    item.title = `${conn.user}@${conn.host}:${conn.port}`;
+
+    const top = el('div', 'c-top');
+    top.appendChild(el('span', 'dot ' + conn.status));
+    top.appendChild(el('span', 'c-name', conn.name));
+    if (conn.busyBy) top.appendChild(el('span', 'c-busy', '占用'));
+    item.appendChild(top);
+
+    item.appendChild(el('div', 'c-addr', `${conn.user}@${conn.host}:${conn.port}`));
+    if (conn.lastError) item.appendChild(el('div', 'c-err', conn.lastError));
+
+    item.onclick = () => fillForm(conn);
+    list.appendChild(item);
+  }
+}
+
+/* --------------------------------------------------------- connection pane */
+function renderConnections() {
+  const pane = $('connPane');
+  pane.innerHTML = '';
+  $('connSub').textContent = state.connections.length
+    ? `${state.connections.length} 条记录 · 点击卡片可编辑`
+    : '';
+
+  if (state.connections.length === 0) {
+    const box = el('div', 'empty-state');
+    box.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></svg>';
+    box.appendChild(el('h4', null, '还没有保存任何连接'));
+    box.appendChild(el('p', null, '在下面填写主机、用户名和认证方式，保存后就能在 MCP 工具里直接调用。'));
+    pane.appendChild(box);
+    return;
+  }
+
+  const grid = el('div', 'conn-grid');
+  const editing = $('originalName').value;
+
+  for (const conn of state.connections) {
+    const card = el('div', 'conn-card s-' + conn.status + (conn.name === editing ? ' active' : ''));
+
+    const top = el('div', 'cc-top');
+    top.appendChild(el('span', 'cc-name', conn.name));
+    top.appendChild(el('span', 'spacer'));
+    const badge = el('span', 'badge ' + conn.status);
+    badge.appendChild(el('span', 'd'));
+    badge.appendChild(document.createTextNode(STATUS_TEXT[conn.status] || conn.status));
+    top.appendChild(badge);
+    card.appendChild(top);
+
+    card.appendChild(el('div', 'cc-addr', `${conn.user}@${conn.host}:${conn.port}`));
+
+    const meta = el('div', 'cc-meta');
+    const authTag = el('span', 'tag' + (conn.authType === 'password' && !conn.hasPassword ? ' err' : ''));
+    authTag.textContent = conn.authType === 'password'
+      ? (conn.hasPassword ? '密码认证' : '密码未设置')
+      : (conn.keyPath ? '私钥文件' : '私钥内容');
+    meta.appendChild(authTag);
+
+    if (conn.keyPath) {
+      const t = el('span', 'tag');
+      t.appendChild(icon(['M15 7a4 4 0 100 8 4 4 0 000-8z', 'M11.5 11.5L4 19v2h3']));
+      t.appendChild(el('span', null, conn.keyPath));
+      t.title = conn.keyPath;
+      meta.appendChild(t);
+    }
+    if (conn.tunnel) {
+      const t = el('span', 'tag warn');
+      t.appendChild(icon(['M4 12h16', 'M8 8l-4 4 4 4', 'M16 8l4 4-4 4']));
+      t.appendChild(el('span', null, conn.tunnel));
+      meta.appendChild(t);
+    }
+    if (conn.connectedAt) {
+      const t = el('span', 'tag ok');
+      t.appendChild(icon(['M12 21a9 9 0 100-18 9 9 0 000 18z', 'M12 7.5V12l3 2']));
+      t.appendChild(el('span', null, '连接于 ' + fmtTime(conn.connectedAt)));
+      meta.appendChild(t);
+    }
+    if (conn.busyBy) meta.appendChild(el('span', 'tag warn', '占用：' + conn.busyBy));
+    card.appendChild(meta);
+
+    if (conn.lastError) card.appendChild(el('div', 'cc-err', conn.lastError));
+
+    const acts = el('div', 'cc-acts');
+    const isUp = conn.status === 'connected';
+    const toggle = el('button', 'btn sm' + (isUp ? '' : ' outline'));
+    toggle.appendChild(icon(isUp
+      ? ['M12 3v9', 'M6.5 6.5a8 8 0 1011 0']
+      : ['M9 7l8 5-8 5z']));
+    toggle.appendChild(el('span', null, isUp ? '断开' : '连接'));
+    toggle.onclick = async () => {
+      toggle.disabled = true;
+      const r = await api('/api/' + (isUp ? 'disconnect' : 'connect'), { name: conn.name });
+      toast(r.ok ? 'ok' : 'err', r.message || r.error);
+      await refresh();
+    };
+    acts.appendChild(toggle);
+
+    const edit = el('button', 'btn sm ghost');
+    edit.appendChild(icon(['M12 20h9', 'M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z']));
+    edit.appendChild(el('span', null, '编辑'));
+    edit.onclick = () => {
+      fillForm(conn);
+      $('name').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    };
+    acts.appendChild(edit);
+
+    const del = el('button', 'btn sm ghost danger-quiet');
+    del.appendChild(icon(['M3 6h18', 'M8 6V4h8v2', 'M6 6l1 14h10l1-14']));
+    del.appendChild(el('span', null, '删除'));
+    del.onclick = async () => {
+      if (!confirm(`删除连接「${conn.name}」？凭据引用会保留在凭据库中。`)) return;
+      const r = await api('/api/remove', { name: conn.name });
+      toast(r.ok ? 'ok' : 'err', r.message || r.error);
+      if ($('originalName').value === conn.name) resetForm();
+      await refresh();
+    };
+    acts.appendChild(del);
+
+    card.appendChild(acts);
+    grid.appendChild(card);
+  }
+
+  pane.appendChild(grid);
+}
+
+/* ------------------------------------------------------------ target menus */
+function renderTargets() {
+  const keepExec = $('execTarget').value;
+  $('execTarget').innerHTML = '';
+  if (state.connections.length === 0) {
+    const opt = el('option', null, '选择一个连接…');
+    opt.value = '';
+    $('execTarget').appendChild(opt);
+  }
+  for (const conn of state.connections) {
+    const opt = el('option', null, `${conn.name} · ${conn.user}@${conn.host}`);
+    opt.value = conn.name;
+    $('execTarget').appendChild(opt);
+  }
+  if (keepExec && state.connections.some((c) => c.name === keepExec)) $('execTarget').value = keepExec;
+
+  const keepTunnel = $('tunnel').value;
+  $('tunnel').innerHTML = '';
+  const none = el('option', null, '不使用');
+  none.value = '';
+  $('tunnel').appendChild(none);
+  for (const name of state.tunnelCandidates) {
+    if (name === $('originalName').value) continue;
+    const opt = el('option', null, name);
+    opt.value = name;
+    $('tunnel').appendChild(opt);
+  }
+  if (keepTunnel) $('tunnel').value = keepTunnel;
+}
+
+/* ------------------------------------------------------------------- form */
+function authType() {
+  return document.querySelector('input[name=authType]:checked').value;
+}
+
+function syncAuthFields() {
+  const type = authType();
+  $('wrapPassword').style.display = type === 'password' ? '' : 'none';
+  $('wrapKeyPath').style.display = type === 'keypath' ? '' : 'none';
+  $('wrapKeyText').style.display = type === 'keytext' ? '' : 'none';
+  $('wrapPassphrase').style.display = type === 'keytext' ? '' : 'none';
+  const editing = $('mode').value === 'update';
+  $('passwordHint').textContent = editing
+    ? '留空 = 不改动已保存的密码；填了就覆盖。'
+    : '保存在本机共享凭据库中，连接记录里只存引用。';
+  $('passwordHint').className = 'hint' + (editing ? ' warn' : '');
+  $('password').placeholder = editing ? '留空则不修改' : '连接密码';
+}
+
+function resetForm() {
+  $('form').reset();
+  $('mode').value = 'create';
+  $('originalName').value = '';
+  $('port').value = 22;
+  $('formTitle').textContent = '新建连接';
+  $('formSub').textContent = '填写后保存，即可被 MCP 工具直接调用';
+  $('cardTitle').textContent = '连接详情';
+  $('modeBadge').style.display = 'none';
+  document.querySelector('input[name=authType][value=password]').checked = true;
+  syncAuthFields();
+  renderSidebar();
+  renderConnections();
+}
+
+function fillForm(conn) {
+  $('mode').value = 'update';
+  $('originalName').value = conn.name;
+  $('name').value = conn.name;
+  $('host').value = conn.host;
+  $('port').value = conn.port;
+  $('user').value = conn.user;
+  $('tunnel').value = conn.tunnel || '';
+  const type = conn.authType === 'password' ? 'password' : (conn.keyPath ? 'keypath' : 'keytext');
+  document.querySelector(`input[name=authType][value=${type}]`).checked = true;
+  $('privateKeyPath').value = conn.keyPath || '';
+  $('password').value = '';
+  $('privateKey').value = '';
+  $('passphrase').value = '';
+  $('formTitle').textContent = '编辑 · ' + conn.name;
+  $('formSub').textContent = `${conn.user}@${conn.host}:${conn.port}`;
+  $('cardTitle').textContent = '连接详情';
+  $('modeBadge').style.display = '';
+  syncAuthFields();
+  renderSidebar();
+  renderConnections();
+}
+
+function formBody(connect) {
+  const type = authType();
+  const editing = $('mode').value === 'update';
+  const typedName = $('name').value.trim();
+  return {
+    mode: $('mode').value,
+    // `name` must be the record's CURRENT key. While editing, the name field
+    // may already hold the *new* name, so the key has to come from
+    // `originalName` — otherwise the server looks up a record that does not
+    // exist yet and every rename fails with "no saved connection named …".
+    name: editing ? $('originalName').value.trim() : typedName,
+    newName: editing ? typedName : undefined,
+    host: $('host').value.trim(),
+    port: $('port').value,
+    user: $('user').value.trim(),
+    tunnel: $('tunnel').value,
+    authType: type,
+    password: type === 'password' ? $('password').value : undefined,
+    privateKey: type === 'keytext' ? $('privateKey').value : undefined,
+    passphrase: type === 'keytext' ? $('passphrase').value : undefined,
+    privateKeyPath: type === 'keypath' ? $('privateKeyPath').value.trim() : undefined,
+    connect,
+  };
+}
+
+function busy(button, on, label) {
+  if (on) {
+    button.dataset.html = button.innerHTML;
+    button.innerHTML = '';
+    button.appendChild(el('span', 'spin'));
+    button.appendChild(el('span', null, label || '处理中…'));
+    button.disabled = true;
+  } else {
+    if (button.dataset.html) button.innerHTML = button.dataset.html;
+    button.disabled = false;
+  }
+}
+
+async function submitForm(connect) {
+  const buttons = [$('saveConnect'), $('saveOnly')];
+  busy(buttons[0], true, connect ? '连接中…' : '保存中…');
+  buttons[1].disabled = true;
+  const r = await api('/api/save', formBody(connect));
+  busy(buttons[0], false);
+  buttons[1].disabled = false;
+  toast(r.ok ? 'ok' : 'err', r.message || r.error);
+  $('password').value = '';
+  $('privateKey').value = '';
+  $('passphrase').value = '';
+  if (r.ok) {
+    $('originalName').value = r.name;
+    $('mode').value = 'update';
+    $('formTitle').textContent = '编辑 · ' + r.name;
+    $('modeBadge').style.display = '';
+    syncAuthFields();
+  }
+  await refresh();
+}
+
+/* ---------------------------------------------------------------- refresh */
+async function refresh() {
+  let r;
+  try {
+    r = await api('/api/state');
+  } catch {
+    setLive(false);
+    return;
+  }
+  if (!r.ok) {
+    setLive(false);
+    toast('err', r.error || '读取状态失败');
+    return;
+  }
+  setLive(true);
+  state = r;
+  $('recordsPath').textContent = r.paths.records || '—';
+  $('recordsPath').title = r.paths.records || '';
+
+  const sig = JSON.stringify(r.connections.map((c) => [
+    c.name, c.status, c.busyBy, c.lastError, c.connectedAt, c.tunnel,
+  ]));
+  if (sig !== lastListSig) {
+    lastListSig = sig;
+    renderSidebar();
+    renderConnections();
+    renderTargets();
+  }
+}
+
+/* --------------------------------------------------------------- terminal */
+function termStatus(text) { $('termStatus').textContent = text || 'idle'; }
+function execMeta(text) { $('execMeta').textContent = text || ''; }
+
+function paintOutput(r) {
+  $('execOut').textContent = (r.output || '') + (r.output && !r.output.endsWith('\n') ? '\n' : '');
+  $('execOut').scrollTop = $('execOut').scrollHeight;
+}
+
+async function runExec() {
+  const name = $('execTarget').value;
+  const command = $('execCmd').value.trim();
+  if (!name) return toast('err', '先选一个连接');
+  if (!command) return toast('err', '命令不能为空');
+  $('execRun').disabled = true;
+  execMeta('执行中…');
+  termStatus('running');
+  $('execOut').textContent = `$ ${command}\n`;
+  const r = await api('/api/exec', { name, command, timeoutMs: 30000 });
+  $('execRun').disabled = false;
+  paintOutput(r);
+  currentExecId = r.status === 'running' ? r.execId : null;
+  $('execRead').disabled = !currentExecId;
+  $('execKill').disabled = !currentExecId;
+  $('termTitle').textContent = `${name} · stdout`;
+  if (r.status === 'running') {
+    execMeta('仍在运行');
+    termStatus('running');
+  } else {
+    execMeta(`exit ${r.exitCode ?? '-'}${r.truncated ? ' · 输出已截断' : ''}${r.message ? ' · ' + r.message : ''}`);
+    termStatus(r.ok ? `exit ${r.exitCode ?? 0}` : 'error');
+  }
+  if (!r.ok && r.message) execMeta(r.message);
+}
+
+async function readExec() {
+  if (!currentExecId) return;
+  const r = await api('/api/execRead', { execId: currentExecId });
+  paintOutput(r);
+  if (r.status !== 'running') {
+    currentExecId = null;
+    $('execRead').disabled = true;
+    $('execKill').disabled = true;
+  }
+  execMeta(`exit ${r.exitCode ?? '-'}${r.message ? ' · ' + r.message : ''}`);
+  termStatus(r.status === 'running' ? 'running' : `exit ${r.exitCode ?? 0}`);
+}
+
+async function killExec() {
+  if (!currentExecId) return;
+  const r = await api('/api/execKill', { execId: currentExecId });
+  toast('info', r.message || '已终止');
+  currentExecId = null;
+  $('execRead').disabled = true;
+  $('execKill').disabled = true;
+  termStatus('killed');
+  await refresh();
+}
+
+/* ------------------------------------------------------------------ wiring */
+$('form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  submitForm(event.submitter && event.submitter.dataset.only !== '1');
+});
+document.querySelectorAll('input[name=authType]').forEach((radio) => radio.addEventListener('change', syncAuthFields));
+document.querySelectorAll('.eye').forEach((button) => {
+  button.onclick = () => {
+    const field = $(button.dataset.for);
+    field.type = field.type === 'password' ? 'text' : 'password';
+  };
+});
+$('btnNew').onclick = () => {
+  resetForm();
+  $('name').focus();
+  $('name').scrollIntoView({ behavior: 'smooth', block: 'center' });
+};
+$('reset').onclick = resetForm;
+$('refresh').onclick = async () => {
+  await refresh();
+  await refreshActivity();
+  await loadFacets();
+  logCursor = null;
+  await loadLog();
+};
+$('search').addEventListener('input', renderSidebar);
+$('execRun').onclick = runExec;
+$('execRead').onclick = readExec;
+$('execKill').onclick = killExec;
+$('execClear').onclick = () => { $('execOut').textContent = ''; termStatus('idle'); };
+$('execCmd').addEventListener('keydown', (event) => { if (event.key === 'Enter') runExec(); });
+document.addEventListener('keydown', (event) => {
+  if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') runExec();
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+    event.preventDefault();
+    submitForm(false);
+  }
+});
+
+syncAuthFields();
+refresh();
+refreshActivity();
+loadLog();
+setInterval(async () => {
+  await refresh();
+  await refreshActivity();
+  if (currentExecId) await readExec();
+}, 2500);
+
+// The log table is not on the fast cycle: it holds a reading position the user
+// chose, and silently prepending rows would move the page under them. It is
+// refreshed when they touch a filter, or by the "刷新" button.
+</script>
+</body>
+</html>

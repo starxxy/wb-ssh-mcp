@@ -1,0 +1,52 @@
+diff --git a/lib/manager.js b/lib/manager.js
+index 8fbb05b..46e60a5 100644
+--- a/lib/manager.js
++++ b/lib/manager.js
+@@ -120,6 +120,9 @@ class Session {
+     this.key = key;
+     this.status = STATUS_DISCONNECTED;
+     this.client = null;
++    /** The client of the newest connect attempt, cleared when that client
++     * closes. Used to recognise a superseded client's late `close` event. */
++    this.connectingClient = null;
+     this.explicitClose = false;
+     this.lastError = null;
+     this.connectedAt = null;
+@@ -809,6 +812,7 @@ export class SshManager {
+ 
+     const promise = new Promise((resolve) => {
+       const client = new Client();
++      session.connectingClient = client;
+       const timeoutMs = this.config.connectTimeoutMs;
+       let settled = false;
+       const settle = (value) => {
+@@ -888,9 +892,26 @@ export class SshManager {
+         settle({ ok: false, status: STATUS_ERROR, error: message });
+       });
+       client.on('close', () => {
+-        if (session.client === client) session.client = null;
+-        // The shared shell dies with its connection.
+-        if (session.shellStream !== null) {
++        // Is this still the session's client, or at least the client of its
++        // newest connect attempt?
++        //
++        // `disconnect` ends a client asynchronously, so its `close` can land
++        // after a NEW connection has already been built and a NEW shell
++        // spawned. Such a superseded client must not touch the live session:
++        // nulling `shellStream` would orphan the live shell, and reaching the
++        // `becameReady` branch below would start an auto-reconnect on a
++        // healthy connection. (Local: a human cannot click fast enough to hit
++        // this; an agent issuing disconnect -> exec back to back can.)
++        const isCurrent = session.client === client;
++        const ownsAttempt = session.connectingClient === client;
++        if (isCurrent) session.client = null;
++        if (ownsAttempt) session.connectingClient = null;
++        if (!isCurrent && !ownsAttempt) {
++          settle({ ok: true, status: session.status });
++          return;
++        }
++        // The shared shell dies with its connection — but only with its own.
++        if (isCurrent && session.shellStream !== null) {
+           session.shellStream = null;
+         }
+         if (session.resizeTimer !== null) {

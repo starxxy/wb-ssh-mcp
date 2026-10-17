@@ -1,0 +1,29 @@
+# Line endings are normalised to LF in the repository, always.
+#
+# This is not cosmetic. `vendor/manager.js`, `store.js` and `tools.js` are
+# byte-for-byte copies of upstream whose sha256 is recorded in
+# `vendor/PROVENANCE.md` (and re-checked by anyone re-syncing with
+# starxxy/dsh-ssh). Those hashes are hashes of LF content. With the Windows
+# default `core.autocrlf=true` and no attributes file, git would store CRLF,
+# and a fresh clone on any machine would produce different bytes than the
+# recorded hashes — the exact failure mode PROVENANCE.md warns about.
+#
+# `text=auto eol=lf` normalises on the way in and checks out LF on every
+# platform, so the hashes hold everywhere.
+* text=auto eol=lf
+
+# Windows launchers are the one exception: they are parsed by cmd.exe and
+# Windows Script Host, and a `.cmd` whose lines end in a bare LF can mis-parse
+# its own `goto` labels. These check out as CRLF — and because the files are
+# GBK-encoded (cmd reads them with the system ANSI code page), `text` also
+# keeps git from guessing wrong about them.
+*.cmd text eol=crlf
+*.vbs text eol=crlf
+
+# Binary files must never be line-ending converted.
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.zip binary
+*.gz binary

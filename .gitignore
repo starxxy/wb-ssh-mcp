@@ -1,0 +1,13 @@
+# Dependencies are installed with `npm install`; the lockfile is what matters.
+node_modules/
+
+# WorkBuddy's own workspace directory (agent memory, session state). It is not
+# part of the project's source and can contain machine-local paths.
+.workbuddy-ai/
+
+# Runtime output of the probes and the UI. `ui.log.1` is the rotated
+# generation that start-ui.vbs keeps, and is not matched by `*.log`.
+*.log
+*.log.*
+.DS_Store
+Thumbs.db

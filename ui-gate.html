@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>wb-ssh · 需要访问密码</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232563eb'/%3E%3Cpath d='M16 9a4 4 0 00-4 4v2h-1v8h10v-8h-1v-2a4 4 0 00-4-4zm0 2a2 2 0 012 2v2h-4v-2a2 2 0 012-2z' fill='white'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --primary: #2563eb;
+    --primary-light: #3b82f6;
+    --primary-dark: #1d4ed8;
+    --primary-ring: rgba(37, 99, 235, .14);
+    --surface: #ffffff;
+    --border: #e3e9f0;
+    --border-strong: #cfd8e3;
+    --text: #0f172a;
+    --text-2: #475569;
+    --text-muted: #7c8ba1;
+    --bg: #f4f7fb;
+    --err: #dc2626;
+    --ok: #059669;
+    --sh-xl: 0 24px 48px -12px rgba(15,23,42,.22);
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+            "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code", Consolas, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 32px 20px;
+    background:
+      radial-gradient(900px 500px at 12% -8%, rgba(59,130,246,.13), transparent 62%),
+      radial-gradient(800px 480px at 92% 108%, rgba(139,92,246,.11), transparent 60%),
+      var(--bg);
+    color: var(--text);
+    font: 400 14px/1.7 var(--sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  .card {
+    width: 100%; max-width: 520px; background: var(--surface);
+    border: 1px solid var(--border); border-radius: 20px;
+    box-shadow: var(--sh-xl); overflow: hidden;
+    animation: rise 420ms cubic-bezier(.34, 1.3, .64, 1);
+  }
+  @keyframes rise { from { opacity: 0; transform: translateY(16px) scale(.98); } to { opacity: 1; transform: none; } }
+  @keyframes shake {
+    10%, 90% { transform: translateX(-2px); }
+    30%, 70% { transform: translateX(4px); }
+    50% { transform: translateX(-3px); }
+  }
+  .card.nope { animation: shake 380ms ease-in-out; }
+  .bar { height: 3px; background: linear-gradient(90deg, var(--primary-light), #8b5cf6 55%, #f59e0b); }
+  .inner { padding: 34px 34px 30px; }
+  .glyph {
+    width: 52px; height: 52px; border-radius: 15px; display: grid; place-items: center;
+    background: linear-gradient(135deg, var(--primary-light), var(--primary-dark));
+    box-shadow: 0 8px 20px -6px rgba(37,99,235,.6), inset 0 1px 0 rgba(255,255,255,.25);
+    margin-bottom: 20px;
+  }
+  .glyph svg { width: 26px; height: 26px; }
+  h1 { margin: 0 0 8px; font-size: 20px; font-weight: 660; letter-spacing: -.015em; }
+  .lead { margin: 0 0 24px; font-size: 13.5px; color: var(--text-2); line-height: 1.75; }
+  label { display: block; font-size: 12.5px; font-weight: 550; color: var(--text-2); margin-bottom: 8px; }
+  .row { display: flex; gap: 9px; }
+  input[type=text], input[type=password] {
+    flex: 1; min-width: 0; padding: 11px 13px; font-size: 13px;
+    border: 1px solid var(--border-strong); border-radius: 10px; background: #fff; color: var(--text);
+    transition: border-color 150ms, box-shadow 150ms;
+  }
+  input[type=text] { font-family: var(--mono); font-size: 12.5px; }
+  input[type=password] { letter-spacing: .12em; }
+  input::placeholder { color: #a9b6c8; letter-spacing: normal; }
+  input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-ring); }
+  button {
+    padding: 11px 20px; border: 0; border-radius: 10px; cursor: pointer; white-space: nowrap;
+    font: 600 13.5px var(--sans); color: #fff;
+    background: linear-gradient(135deg, var(--primary-light), var(--primary));
+    box-shadow: 0 4px 12px -4px rgba(37,99,235,.6);
+    transition: filter 150ms, transform 150ms;
+  }
+  button:hover:not(:disabled) { filter: brightness(1.08); }
+  button:active:not(:disabled) { transform: scale(.98); }
+  button:disabled { opacity: .6; cursor: default; }
+  .msg { margin-top: 10px; font-size: 12.5px; color: var(--err); min-height: 19px; }
+  .msg.ok { color: var(--ok); }
+  details { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--border); }
+  summary {
+    cursor: pointer; font-size: 12.5px; color: var(--text-2); font-weight: 550;
+    list-style: none; display: flex; align-items: center; gap: 7px;
+  }
+  summary::-webkit-details-marker { display: none; }
+  summary::before {
+    content: ""; width: 0; height: 0; flex: none;
+    border-left: 5px solid var(--text-muted);
+    border-top: 4px solid transparent; border-bottom: 4px solid transparent;
+    transition: transform 160ms;
+  }
+  details[open] summary::before { transform: rotate(90deg); }
+  summary:hover { color: var(--primary); }
+  .paste { margin-top: 16px; }
+  .hint { margin: 10px 0 0; font-size: 12px; color: var(--text-muted); line-height: 1.7; }
+  code {
+    font-family: var(--mono); font-size: 11.5px; padding: 1.5px 6px; border-radius: 5px;
+    background: #eef2f7; color: #1e3a8a; word-break: break-all;
+  }
+  .foot {
+    margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--border);
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    font-size: 11.5px; color: var(--text-muted);
+  }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); flex: none; }
+  .foot .sep { margin-left: auto; font-family: var(--mono); }
+</style>
+</head>
+<body>
+<div class="card" id="card">
+  <div class="bar"></div>
+  <div class="inner">
+    <div class="glyph">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="4" y="10" width="16" height="11" rx="2.5"/>
+        <path d="M8 10V7a4 4 0 118 0v3"/>
+        <path d="M12 14.5v2.5"/>
+      </svg>
+    </div>
+
+    <h1>需要访问密码</h1>
+    <p class="lead">
+      服务在正常运行，只是这次请求没带上凭据。输入访问密码，或者改用带令牌的完整地址。
+    </p>
+
+    <label for="pw">访问密码</label>
+    <div class="row">
+      <input type="password" id="pw" spellcheck="false" autocomplete="off" placeholder="输入访问密码">
+      <button id="go">进入</button>
+    </div>
+    <div class="msg" id="msg"></div>
+
+    <details>
+      <summary>没设过密码？用带令牌的地址打开</summary>
+      <div class="paste">
+        <label for="url">把完整链接粘到这里</label>
+        <div class="row">
+          <input type="text" id="url" spellcheck="false" placeholder="http://127.0.0.1:PORT/?t=…">
+          <button id="open">打开</button>
+        </div>
+        <div class="msg" id="msg2"></div>
+        <p class="hint">
+          完整链接在启动服务的终端窗口里，形如
+          <code>http://127.0.0.1:<span id="p1">…</span>/?t=…</code>。
+          进页面之后可以在「访问凭据」里设置密码和更换令牌。
+        </p>
+      </div>
+    </details>
+
+    <div class="foot">
+      <span class="dot"></span>
+      <span>仅监听 127.0.0.1，未对外暴露</span>
+      <span class="sep" id="origin"></span>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+const port = location.port || '80';
+document.getElementById('p1').textContent = port;
+document.getElementById('origin').textContent = location.host;
+
+const card = document.getElementById('card');
+const pw = document.getElementById('pw');
+const msg = document.getElementById('msg');
+const goBtn = document.getElementById('go');
+let busy = false;
+
+function say(node, text, ok) {
+  node.className = ok === true ? 'msg ok' : 'msg';
+  node.textContent = text;
+}
+
+function reject(text) {
+  say(msg, text);
+  card.classList.remove('nope');
+  void card.offsetWidth;
+  card.classList.add('nope');
+  pw.select();
+}
+
+async function submit() {
+  if (busy) return;
+  if (pw.value === '') return reject('先输入访问密码。');
+
+  busy = true;
+  goBtn.disabled = true;
+  goBtn.textContent = '验证中…';
+  say(msg, '');
+
+  try {
+    const response = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ password: pw.value }),
+    });
+    const data = await response.json().catch(() => ({}));
+
+    if (data.ok === true) {
+      say(msg, '正在进入…', true);
+      location.href = '/';
+      return;
+    }
+    reject(data.error || '密码不正确。');
+  } catch {
+    reject('请求失败，服务可能已经停止。');
+  } finally {
+    busy = false;
+    goBtn.disabled = false;
+    goBtn.textContent = '进入';
+  }
+}
+
+goBtn.onclick = submit;
+pw.addEventListener('keydown', (event) => { if (event.key === 'Enter') submit(); });
+
+// ---------------------------------------------------------------- paste fallback
+
+const urlInput = document.getElementById('url');
+const msg2 = document.getElementById('msg2');
+
+function openLink() {
+  const raw = urlInput.value.trim();
+  if (raw === '') return say(msg2, '先粘贴一条完整链接。');
+
+  let parsed;
+  try {
+    parsed = new URL(raw.includes('://') ? raw : 'http://' + raw);
+  } catch {
+    return say(msg2, '这不是一个合法的网址。');
+  }
+
+  const hostOk = ['127.0.0.1', 'localhost', '[::1]', '::1'].includes(parsed.hostname);
+  if (!hostOk || parsed.port !== port) {
+    return say(msg2, '请粘贴本服务的链接（' + location.host + '）。');
+  }
+  if (!parsed.searchParams.get('t')) {
+    return say(msg2, '这条链接里没有 ?t= 令牌，请从终端复制完整那一行。');
+  }
+
+  say(msg2, '正在打开…', true);
+  location.href = parsed.href;
+}
+
+document.getElementById('open').onclick = openLink;
+urlInput.addEventListener('keydown', (event) => { if (event.key === 'Enter') openLink(); });
+
+pw.focus();
+</script>
+</body>
+</html>

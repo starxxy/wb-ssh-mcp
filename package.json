@@ -1,0 +1,29 @@
+{
+  "name": "wb-ssh-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Standalone MCP server exposing the SSH connection manager of @jmcc-guo/dsh-ssh (starxxy/dsh-ssh fork) to any MCP client. Shares the DeepSeek Harness connection records and credential store, so connections created in the DSH panel are usable here and vice versa.",
+  "main": "server.mjs",
+  "bin": {
+    "wb-ssh-mcp": "./server.mjs",
+    "wb-ssh-cred": "./cred.mjs"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "ui": "node ui.mjs",
+    "selftest": "node selftest.mjs",
+    "e2e": "node e2e.mjs",
+    "probe": "node probe-reconnect.mjs",
+    "probe:sftp": "node probe-sftp.mjs"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh-tools": "file:shims/dsh-tools",
+    "@modelcontextprotocol/sdk": "^1.31.0",
+    "ssh2": "^1.17.0",
+    "yaml": "^2.9.1"
+  }
+}
